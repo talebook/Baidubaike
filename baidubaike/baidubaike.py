@@ -1,6 +1,8 @@
-#-*-coding:utf-8-*- 
+#!/usr/bin/python
+#-*- coding: UTF-8 -*-
 
 import re
+import logging
 import requests
 from bs4 import BeautifulSoup
 from collections import OrderedDict
@@ -12,14 +14,19 @@ CLASS_DISAMBIGUATION = ['nslog:519']
 CLASS_CREATOR        = ['nslog:1022']
 CLASS_REFERENCE      = ['nslog:1968']
 CLASS_TAG            = ['nslog:7336', 'taglist']
-CLASS_CONTENT        = ['lemmaTitleH1', 'headline-1', 'headline-2', 'para']
+CLASS_CONTENT        = {
+        'lemmaTitleH1': '===== %(text)s ====\n\n',
+        'headline-1': '\n== %(text)s ==\n',
+        'headline-2': '\n* %(text)s *\n',
+        'para': '%(text)s',
+        }
 
+CLASS_SUMMARY = [ 'lemma-summary' ]
+CLASS_INFO = ['basicInfo-item']
 
 
 class Page(object):
-
     def __init__(self, string, encoding='utf-8'):
-
         url = 'http://baike.baidu.com/search/word'
         payload = None
 
@@ -32,7 +39,7 @@ class Page(object):
 
         self.http = requests.get(url, params=payload)
         self.html = self.http.content
-        self.soup = BeautifulSoup(self.html)
+        self.soup = BeautifulSoup(self.html, "lxml")
 
         # Exceptions
         if self.soup.find(class_=CLASS_DISAMBIGUATION):
@@ -42,11 +49,41 @@ class Page(object):
         if self.soup.find(id='vf'):
             raise VerifyError(string)
 
+    def __str__(self):
+        msg = [
+            "[Info]",
+            "\n".join( u'%s: %s' % (k,v) for k,v in p.get_info().items() ),
+            "",
+            "[Summary]",
+            p.get_summary(),
+            "",
+            "[Tags]",
+            ", ".join( p.get_tags() ),
+        ]
+        s = '\n'.join(msg)
+        return s.encode("UTF-8")
+
+    def parse_basic_info(self):
+        """Get basic info of a page"""
+        divs = self.soup.find_all(class_=CLASS_INFO)
+        info = {}
+        name = ""
+        for div in divs:
+            if 'name' in div.get('class'):
+                name = div.get_text(strip=True).replace(u"\xa0", "")
+            if 'value' in div.get('class'):
+                value = div.get_text(strip=True)
+                if not name:
+                    logging.error("analyse error, no name for value[%s]" % value)
+                    continue
+                info[name] = value
+                name = None
+        return info
 
     def get_info(self):
         """ Get informations of the page """
 
-        info = {}
+        info = self.parse_basic_info()
         title = self.soup.title.get_text()
         info['title'] = title[:title.rfind('_')]
         info['url'] = self.http.url
@@ -59,30 +96,29 @@ class Page(object):
         finally:
             return info
 
-    
     def get_content(self):
         """ Get main content of a page """
-
-        content_list = self.soup.find_all(class_=CLASS_CONTENT)
+        content_list = self.soup.find_all(class_=CLASS_CONTENT.keys())
         content = []
 
-        for text in content_list:
-            if CLASS_CONTENT[0] in text.get('class'):
-                content.append('==== %s ====\n\n'%text.get_text())
-            elif CLASS_CONTENT[1] in text.get('class'):
-                content.append('\n== %s ==\n'%text.get_text())
-            elif CLASS_CONTENT[2] in text.get('class'):
-                content.append('\n* %s *\n'%text.get_text())
-            elif CLASS_CONTENT[3] in text.get('class'):
-                content.append('%s'%text.get_text())
+        for div in content_list:
+            klass = div.get('class')
+            text = div.get_text()
+            for k,fmt in CLASS_CONTENT.items():
+                if k in klass:
+                    content.append( fmt % vars() )
 
         return '\n'.join(content)
 
+    def get_summary(self):
+        """Get summary infomation of a page"""
+        divs = self.soup.find_all(class_=CLASS_SUMMARY)
+        summary = ""
+        return '\n'.join( div.get_text(strip=True) for div in divs )
 
     def get_inurls(self):
         """ Get links inside a page """
-
-        inurls = OrderedDict() 
+        inurls = OrderedDict()
         href = self.soup.find_all(href=re.compile('\/(sub)?view(\/[0-9]*)+.htm'))
 
         for url in href:
@@ -93,19 +129,16 @@ class Page(object):
 
     def get_tags(self):
         """ Get tags of the page """
-
         tags = []
         for tag in self.soup.find_all(class_=CLASS_TAG):
-            tags.append(tag.get_text())
+            tags.append(tag.get_text(strip=True))
 
         return tags
 
-    
     def get_references(self):
         """ Get references of the page """
 
         references = []
-
         for ref in self.soup.find_all(class_=CLASS_REFERENCE):
             r = {}
             r['title'] = ref.get_text()
@@ -117,9 +150,7 @@ class Page(object):
 
 
 class Search(object):
-
     def __init__(self, word, results_n=10, page_n=1):
-        
         # Generate searching URL
         url = 'http://baike.baidu.com/search'
         pn = (page_n - 1) * results_n
@@ -138,7 +169,7 @@ class Search(object):
 
         for item in items:
             result = {}
-            a = item.find('a')                      
+            a = item.find('a')
             title = a.get_text()                    # get result title
             title = title[:title.rfind('_')]
             result['title'] = title
@@ -148,3 +179,10 @@ class Search(object):
             search_results.append(result)
 
         return search_results
+
+if __name__ == "__main__":
+    for word in [ 'google', u'异界之暗黑召唤师', u'法神重生', u'不存在的帖子']:
+        print u"\n====================\nPage: %s" % word
+        p = Page(word)
+        print str(p)
+
