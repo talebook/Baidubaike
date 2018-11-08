@@ -23,21 +23,28 @@ CLASS_CONTENT        = {
 
 CLASS_SUMMARY = [ 'lemma-summary' ]
 CLASS_INFO = ['basicInfo-item']
+CLASS_SUMMARY_PIC = ['summary-pic']
+
+CHROME_HEADERS = {
+        'Accept-Language': 'zh-CN,zh;q=0.8,zh-TW;q=0.6',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.139 Safari/537.36',
+        }
 
 
 class Page(object):
     def __init__(self, string, encoding='utf-8'):
-        url = 'http://baike.baidu.com/search/word'
+        url = 'https://baike.baidu.com/search/word'
         payload = None
 
         # An url or a word to be Paged
-        pattern = re.compile('^http:\/\/baike\.baidu\.com\/.*', re.IGNORECASE)
+        pattern = re.compile('^https?:\/\/baike\.baidu\.com\/.*', re.IGNORECASE)
         if re.match(pattern, string):
             url = string
         else:
             payload = {'pic':1, 'enc':encoding, 'word':string}
 
-        self.http = requests.get(url, params=payload)
+        self.http = requests.get(url, headers=CHROME_HEADERS, params=payload)
         self.html = self.http.content
         self.soup = BeautifulSoup(self.html, "lxml")
 
@@ -48,20 +55,6 @@ class Page(object):
             raise PageError(string)
         if self.soup.find(id='vf'):
             raise VerifyError(string)
-
-    def __str__(self):
-        msg = [
-            "[Info]",
-            "\n".join( u'%s: %s' % (k,v) for k,v in p.get_info().items() ),
-            "",
-            "[Summary]",
-            p.get_summary(),
-            "",
-            "[Tags]",
-            ", ".join( p.get_tags() ),
-        ]
-        s = '\n'.join(msg)
-        return s.encode("UTF-8")
 
     def parse_basic_info(self):
         """Get basic info of a page"""
@@ -110,6 +103,14 @@ class Page(object):
 
         return '\n'.join(content)
 
+    def get_image(self):
+        divs = self.soup.find_all(class_=CLASS_SUMMARY_PIC)
+        for div in divs:
+            img = div.find("img")
+            url = img.attrs['src']
+            if url: return url
+        return ""
+
     def get_summary(self):
         """Get summary infomation of a page"""
         divs = self.soup.find_all(class_=CLASS_SUMMARY)
@@ -122,7 +123,7 @@ class Page(object):
         href = self.soup.find_all(href=re.compile('\/(sub)?view(\/[0-9]*)+.htm'))
 
         for url in href:
-            inurls[url.get_text()] = 'http://baike.baidu.com%s'%url.get('href')
+            inurls[url.get_text()] = 'https://baike.baidu.com%s'%url.get('href')
 
         return inurls
 
@@ -152,11 +153,11 @@ class Page(object):
 class Search(object):
     def __init__(self, word, results_n=10, page_n=1):
         # Generate searching URL
-        url = 'http://baike.baidu.com/search'
+        url = 'https://baike.baidu.com/search'
         pn = (page_n - 1) * results_n
         payload = {'type':0, 'submit':'search', 'pn':pn, 'rn':results_n, 'word':word}
 
-        self.http = requests.get(url, params=payload)
+        self.http = requests.get(url, headers=CHROME_HEADERS, params=payload)
         self.html = self.http.content
         self.soup = BeautifulSoup(self.html)
 
@@ -179,10 +180,4 @@ class Search(object):
             search_results.append(result)
 
         return search_results
-
-if __name__ == "__main__":
-    for word in [ 'google', u'异界之暗黑召唤师', u'法神重生', u'不存在的帖子']:
-        print u"\n====================\nPage: %s" % word
-        p = Page(word)
-        print str(p)
 
